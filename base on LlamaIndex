@@ -1,1 +1,74 @@
+#1.环境搭建
+# 安装 LlamaIndex 核心库
+pip install llama-index
 
+# 安装 PDF 解析插件（必选）
+pip install llama-index-readers-file
+
+# 安装 Embedding 模型插件（推荐使用 HuggingFace 本地模型，省钱且稳）
+pip install llama-index-embeddings-huggingface
+
+# 安装 LLM 插件（根据你使用的模型选择，这里以 OpenAI 为例）
+pip install llama-index-llms-openai
+
+#2.核心架构实现
+#2.1 初始化模型设置（Settings）
+import os
+from llama_index.core import Settings
+from llama_index.llms.openai import OpenAI
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+
+# 配置大模型 (这里以 GPT-3.5 为例，你也可以换成 Gemini 或本地模型)
+os.environ["OPENAI_API_KEY"] = "你的_API_KEY"
+Settings.llm = OpenAI(model="gpt-3.5-turbo", temperature=0.1)
+
+# 配置 Embedding (使用本地模型，2万字文档完全没压力，且不消耗 Token)
+# 这个模型会自动下载到本地
+Settings.embed_model = HuggingFaceEmbedding(
+    model_name="BAAI/bge-small-zh-v1.5"
+)
+
+# 设置分块大小：对于 2 万字，512 字符是一个平衡点
+Settings.chunk_size = 512
+Settings.chunk_overlap = 50
+
+#2.2文档加载与索引构建
+from llama_index.core import VectorStoreIndex, SimpleDirectoryReader
+
+# 自动读取 ./data 文件夹下的所有 PDF
+documents = SimpleDirectoryReader("./data").load_data()
+
+# 构建向量索引 (这一步会调用 Embedding 模型)
+# 如果你想持久化存储（避免下次运行重新写向量），可以加上持久化逻辑
+index = VectorStoreIndex.from_documents(documents)
+
+# 此时，你的 PDF 已经变成了一个可以被检索的“知识大脑”
+
+#2.3 创建查询引擎（Query Engine）
+# 创建查询引擎，设置相似度最高的 Top K 为 3
+query_engine = index.as_query_engine(similarity_top_k=3)
+
+# 我们可以自定义一个 Prompt 模板，让它更专业
+from llama_index.core import PromptTemplate
+
+qa_prompt_tmpl_str = (
+    "下面是参考信息：\n"
+    "---------------------\n"
+    "{context_str}\n"
+    "---------------------\n"
+    "根据上述信息，请回答问题：{query_str}\n"
+    "如果你在参考信息中找不到答案，请诚实告知，不要胡编乱造。\n"
+)
+qa_prompt_tmpl = PromptTemplate(qa_prompt_tmpl_str)
+query_engine.update_prompts(
+    {"response_synthesizer:text_qa_template": qa_prompt_tmpl}
+)
+
+#2.4 执行提问
+response = query_engine.query("请总结这份 PDF 文档的核心内容。")
+print(f"AI 的回答：\n{response}")
+
+# 如果你想查看 AI 是参考了哪些具体的原文段落：
+for node in response.source_nodes:
+    print(f"参考段落得分: {node.score:.4f}")
+    print(f"段落内容: {node.node.get_content()[:100]}...")
